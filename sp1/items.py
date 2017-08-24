@@ -18,3 +18,5 @@ class Sp1Item(scrapy.Item):
     address = scrapy.Field()
     params = scrapy.Field()
     description = scrapy.Field()
+    url = scrapy.Field()
+    parsetime = scrapy.Field()
