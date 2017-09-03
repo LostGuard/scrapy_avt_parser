@@ -1,12 +1,21 @@
-
 import scrapy
 import re
 import base64
 from datetime import datetime
+from PIL import Image
+import pytesseract
+import io
+import json
 
+
+# scrapy parse "URL" --spider --depth 2  sp1  --callback parse
 class QuotesSpider(scrapy.Spider):
     name = "sp1"
     base_url = 'https://www.avito.ru'
+
+    @staticmethod
+    def get_nom(response):
+        return response.css('.title-info-metadata-item:nth-child(1)::text').extract_first().split(', ')[0].split(' ')[2]
 
     @staticmethod
     def phone_demix(avito_key, phone_key):
@@ -24,72 +33,84 @@ class QuotesSpider(scrapy.Spider):
                 result += new_phone_key[i]
         return result
 
+    @staticmethod
+    def get_phone_img(response):
+        re_ = response.body.decode(response.encoding)
+        l = json.loads(re_)
+        if 'error' in l:
+            return b''
+        base64_ = l['image64'].replace('data:image/png;base64,', '')
+        base64_ += '=' * (4 - len(base64_) % 4)
+        base64_data = str.encode(base64_)
+        return base64.decodebytes(base64_data)
 
+    @staticmethod
+    def img_to_text(image_arr):
+        img = Image.open(io.BytesIO(image_arr))
+        txt = pytesseract.image_to_string(img)
+        return txt
 
     def start_requests(self):
         url = 'https://www.avito.ru/kaluzhskaya_oblast/doma_dachi_kottedzhi/prodam?pmax=100000&pmin=1'
-        yield scrapy.Request(url, callback=self.parse_pages_urls)
+        yield scrapy.Request(url, callback=self.parse_pages)
 
-    def parse_pages_urls(self, response):
+    def parse_pages(self, response):
         print(response.css('p::text').extract())
         n = response.css('a+ .pagination-page ::attr(href)').extract_first().split('=')[1].split('&')[0]
         url = 'https://www.avito.ru/kaluzhskaya_oblast/doma_dachi_kottedzhi/prodam?p=%i&pmax=100000&pmin=1'
         for i in range(1, int(n) + 1):
-            yield scrapy.Request(url % i, callback=self.parse_urls)
+            r = scrapy.Request(url % i, callback=self.parse_urls, priority=0)
+            yield r
 
     def parse_urls(self, response):
         urls = response.css('.item-description-title-link::attr(href)').extract()
         for url in urls:
-            yield scrapy.Request(self.base_url + url, callback=self.parse)
+            yield scrapy.Request(self.base_url + url, callback=self.parse, priority=0)
 
     def parse(self, response):
-        rowaddr = response.css('.item-map-location')
-        address = rowaddr.css('.item-map-label+ span::text').extract_first() + '; ' + rowaddr.css('.item-map-address span::text').extract_first().replace('\n ', '')
-        nom = response.css('.title-info-metadata-item:nth-child(1)::text').extract_first().split(', ')[0].split(' ')[2]
+        body = response.body.decode(response.encoding)
+        phone_key = re.search("avito.item.phone = '.+'", body).group(0).split(" = ")[1].replace("'", "")
+        nom = self.get_nom(response)
+        # https://www.avito.ru/items/phone/1196190703?pkey=abc07d22aee24d42ec7691cf59b839c1&vsrc=r
+        request = scrapy.Request(
+            'https://www.avito.ru/items/phone/%s?pkey=%s&vsrc=r' % (nom, self.phone_demix(nom, phone_key)),
+            callback=self.parse_with_phone)
+        request.meta['item'] = response
+        request.priority = 500
+        yield request
 
-        params = response.css('.item-params-list-item')
+    def parse_with_phone(self, response):
+        old_resp = response.meta['item']
+        img = self.get_phone_img(response)
+        print(response.body.decode(response.encoding))
+        if len(img) < 20:
+            print('Не корректное изображение')
+            yield scrapy.Request(old_resp.url, callback=self.parse)
+            return
+
+        phone_text = self.img_to_text(img)
+        rowaddr = old_resp.css('.item-map-location')
+        address = rowaddr.css('.item-map-label+ span::text').extract_first() + '; ' + rowaddr.css(
+            '.item-map-address span::text').extract_first().replace('\n ', '')
+        nom = self.get_nom(old_resp)
+
+        params = old_resp.css('.item-params-list-item')
         params_list = []
         for i in params:
             par1 = i.css('.item-params-label::text').extract_first()
             par2 = i.css('li.item-params-list-item::text').extract()[1].replace('\n ', '')
             params_list.append([par1, par2])
 
-        #  -----
-        body = response.body.decode(response.encoding)
-        phone_key = re.search("avito.item.phone = '.+'", body).group(0).split(" = ")[1].replace("'", "")
-
-        # https://www.avito.ru/items/phone/1196190703?pkey=abc07d22aee24d42ec7691cf59b839c1&vsrc=r
-        request = scrapy.Request(
-            'https://www.avito.ru/items/phone/%s?pkey=%s&vsrc=r' % (nom, self.phone_demix(nom, phone_key)),
-            callback=self.parse_phone)
-        request.meta['item'] = nom
-        request.priority = 500
-        yield request
-        #  -----
         yield {
-            'url': response.url,
-            'title': response.css('.title-info-title-text::text').extract_first(),
+            'url': old_resp.url,
+            'title': old_resp.css('.title-info-title-text::text').extract_first(),
             'nom': nom,
-            'owner': response.css('.seller-info-name a::text').extract_first().replace('\n ', ''),
-            'phone': None,
-            'date': response.css('.title-info-metadata-item:nth-child(1)::text').extract_first().split(', ')[1],
-            'price': response.css('.js-price-value-string::text').extract_first().replace('\n   ', ''),
+            'owner': old_resp.css('.seller-info-name a::text').extract_first().replace('\n ', ''),
+            'date': old_resp.css('.title-info-metadata-item:nth-child(1)::text').extract_first().split(', ')[1],
+            'price': old_resp.css('.js-price-value-string::text').extract_first().replace('\n   ', ''),
             'address': address,
             'params': str(params_list),
-            'description': response.css('div[itemprop=description] p::text').extract_first(),
+            'description': old_resp.css('div[itemprop=description] p::text').extract_first(),
             'parsetime': datetime.now(),
-        }
-
-    def parse_phone(self, response):
-        print('GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGtghjkjgfghjklkjhgfdfghjk')
-        re_ = response.body.decode(response.encoding)
-        base64_ = re_.split(',')[1].replace('"}', '').replace(" '", '')
-        base64_ += '=' * (4 - len(base64_) % 4)
-        base64_data = str.encode(base64_)
-
-
-        #print(base64_data)
-        yield {
-            'nom': response.meta['item'],
-            'phone': base64.decodebytes(base64_data)
+            'phone': phone_text
         }

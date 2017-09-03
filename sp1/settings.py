@@ -15,6 +15,10 @@ SPIDER_MODULES = ['sp1.spiders']
 NEWSPIDER_MODULE = 'sp1.spiders'
 
 
+DEPTH_PRIORITY = -1
+SCHEDULER_DISK_QUEUE = 'scrapy.squeue.PickleLifoDiskQueue'
+SCHEDULER_MEMORY_QUEUE = 'scrapy.squeue.LifoMemoryQueue'
+
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = 'sp1 (+http://www.yourdomain.com)'
 USER_AGENT = 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)'
@@ -23,7 +27,7 @@ USER_AGENT = 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)'
 #ROBOTSTXT_OBEY = True
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-#CONCURRENT_REQUESTS = 32
+CONCURRENT_REQUESTS = 1
 
 # Configure a delay for requests for the same website (default: 0)
 # See http://scrapy.readthedocs.org/en/latest/topics/settings.html#download-delay
