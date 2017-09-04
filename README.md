@@ -6,3 +6,4 @@ sudo pip3 install scrapy <br>
 sudo apt-get install tesseract-ocr <br>
 sudo pip3 install pytesseract <br>
 
+scrapy crawl sp1
